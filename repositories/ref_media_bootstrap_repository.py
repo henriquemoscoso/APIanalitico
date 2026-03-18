@@ -322,3 +322,37 @@ def load_ref_media_dias_iniciais(
         return df
     finally:
         conn.close()
+
+def load_ref_media_dias_historica(
+    *,
+    is_unique: int,
+    device_client_id: Optional[str] = None,
+) -> pd.DataFrame:
+    conn = get_conn()
+    try:
+        query = """
+            SELECT
+                LTRIM(RTRIM(ClientId)) AS ClientId,
+                LTRIM(RTRIM(Periodo)) AS Periodo,
+                CAST(Media AS float) AS Media,
+                CAST(Dias AS int) AS Dias,
+                IsUnique
+            FROM dbo.RefMediaDiasIniciais
+            WHERE IsUnique = ?
+              AND (? IS NULL OR LTRIM(RTRIM(ClientId)) = LTRIM(RTRIM(?)))
+        """
+
+        params = [is_unique, device_client_id, device_client_id]
+        df = pd.read_sql_query(query, conn, params=params)
+
+        if df.empty:
+            return df
+
+        df["ClientId"] = df["ClientId"].astype(str).str.strip()
+        df["Periodo"] = df["Periodo"].astype(str).str.strip()
+        df["Media"] = pd.to_numeric(df["Media"], errors="coerce").fillna(0).astype(float)
+        df["Dias"] = pd.to_numeric(df["Dias"], errors="coerce").fillna(0).astype(int)
+
+        return df
+    finally:
+        conn.close()

@@ -10,7 +10,7 @@ from repositories.load_tables_ref_by_hour import load_ref_by_hour
 from repositories.ref_media_bootstrap_repository import (
     ref_media_dias_table_exists,
     create_and_populate_ref_media_dias_table,
-    load_ref_media_dias_iniciais,
+    load_ref_media_dias_historica,
 )
 
 
@@ -260,10 +260,10 @@ def build_ref_avg_incremental_response(
     )
 
     # Base histórica já salva no banco
-    df_base = load_ref_media_dias_iniciais(
-        is_unique=is_unique,
-        device_client_id=device_client_id,
-    )
+    df_base = load_ref_media_dias_historica(
+    is_unique=is_unique,
+    device_client_id=device_client_id,
+        )
 
     if df.empty:
         return {
@@ -371,5 +371,162 @@ def build_ref_avg_incremental_response(
         "items": items,
         "summary": {
             "grupos_processados": len(items),
+        },
+    }
+def build_ref_analysis_date_response(
+    *,
+    device_client_id: Optional[str] = None,
+    start_date: datetime,
+    end_date: datetime,
+    is_unique: int,
+    event_type_id: int = 16777985,
+) -> dict:
+    metric_name = "unico" if is_unique == 1 else "total"
+
+    df = load_ref_by_date(
+        device_client_id=device_client_id,
+        start_date=start_date,
+        end_date=end_date,
+        is_unique=is_unique,
+        event_type_id=event_type_id,
+    )
+
+    df_base = load_ref_media_dias_historica(
+        is_unique=is_unique,
+        device_client_id=device_client_id,
+    )
+
+    if df.empty or df_base.empty:
+        return {
+            "locale": "pt-BR",
+            "date": {
+                "start_date": start_date.strftime("%d/%m/%Y"),
+                "end_date": end_date.strftime("%d/%m/%Y"),
+            },
+            "metric": metric_name,
+            "items": [],
+            "summary": {
+                "grupos_processados": 0,
+                "ok": 0,
+                "warning": 0,
+            },
+        }
+
+    df = df.copy()
+    df_base = df_base.copy()
+
+    required_columns = ["EventDate", "ClientId", "Periodo"]
+    missing = [col for col in required_columns if col not in df.columns]
+    if missing:
+        raise ValueError(f"Colunas ausentes no DataFrame: {missing}")
+
+    if is_unique == 1:
+        if "TotalUnico" not in df.columns:
+            raise ValueError("A consulta não retornou a coluna 'TotalUnico'.")
+        df["MetricValue"] = pd.to_numeric(df["TotalUnico"], errors="coerce").fillna(0).astype(float)
+    else:
+        if "Total" in df.columns:
+            df["MetricValue"] = pd.to_numeric(df["Total"], errors="coerce").fillna(0).astype(float)
+        elif "TotalEventos" in df.columns:
+            df["MetricValue"] = pd.to_numeric(df["TotalEventos"], errors="coerce").fillna(0).astype(float)
+        else:
+            raise ValueError("A consulta não retornou 'Total' nem 'TotalEventos'.")
+
+    df["EventDate"] = pd.to_datetime(df["EventDate"]).dt.normalize()
+    df["ClientId"] = df["ClientId"].astype(str).str.strip()
+    df["Periodo"] = df["Periodo"].astype(str).str.strip()
+
+    df_base["ClientId"] = df_base["ClientId"].astype(str).str.strip()
+    df_base["Periodo"] = df_base["Periodo"].astype(str).str.strip()
+    df_base["Media"] = pd.to_numeric(df_base["Media"], errors="coerce").astype(float)
+
+    # reforça o filtro no próprio service
+    if device_client_id:
+        filtro = str(device_client_id).strip()
+        df = df[df["ClientId"] == filtro]
+        df_base = df_base[df_base["ClientId"] == filtro]
+
+    if df.empty or df_base.empty:
+        return {
+            "locale": "pt-BR",
+            "date": {
+                "start_date": start_date.strftime("%d/%m/%Y"),
+                "end_date": end_date.strftime("%d/%m/%Y"),
+            },
+            "metric": metric_name,
+            "items": [],
+            "summary": {
+                "grupos_processados": 0,
+                "ok": 0,
+                "warning": 0,
+            },
+        }
+
+    df_grouped = (
+        df.groupby(["ClientId", "Periodo", "EventDate"], as_index=False)["MetricValue"]
+        .sum()
+        .rename(columns={"MetricValue": "valor_dia"})
+    )
+
+    # comparação só onde existe histórico
+    merged = df_grouped.merge(
+        df_base[["ClientId", "Periodo", "Media"]],
+        on=["ClientId", "Periodo"],
+        how="inner",
+    )
+
+    def calc_diff_percent(row):
+        media = float(row["Media"])
+        valor = float(row["valor_dia"])
+
+        if media == 0:
+            return 0.0 if valor == 0 else 100.0
+
+        return ((valor - media) / media) * 100.0
+
+    merged["diferenca_percentual"] = merged.apply(calc_diff_percent, axis=1)
+
+    def classify(diff):
+        if diff > 10:
+            return "warning_above_10_percent"
+        if diff < -10:
+            return "warning_below_10_percent"
+        return "ok"
+
+    merged["validation"] = merged["diferenca_percentual"].apply(classify)
+
+    items = []
+    ok_count = 0
+    warning_count = 0
+
+    for _, row in merged.sort_values(["EventDate", "ClientId", "Periodo"]).iterrows():
+        validation = row["validation"]
+        if validation == "ok":
+            ok_count += 1
+        else:
+            warning_count += 1
+
+        items.append({
+            "client_id": row["ClientId"],
+            "event_date": row["EventDate"].strftime("%Y-%m-%d"),
+            "periodo": row["Periodo"],
+            "valor_dia": round(float(row["valor_dia"]), 2),
+            "media_historica": round(float(row["Media"]), 2),
+            "diferenca_percentual": round(float(row["diferenca_percentual"]), 2),
+            "validation": validation,
+        })
+
+    return {
+        "locale": "pt-BR",
+        "date": {
+            "start_date": start_date.strftime("%d/%m/%Y"),
+            "end_date": end_date.strftime("%d/%m/%Y"),
+        },
+        "metric": metric_name,
+        "items": items,
+        "summary": {
+            "grupos_processados": len(items),
+            "ok": ok_count,
+            "warning": warning_count,
         },
     }

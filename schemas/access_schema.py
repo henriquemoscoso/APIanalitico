@@ -26,3 +26,20 @@ class RefAvgIncrementalResponse(BaseModel):
     metric: str
     items: List[RefAvgIncrementalItem]
     summary: Dict[str, Any]
+
+class RefAnalysisDateItem(BaseModel):
+    client_id: str
+    event_date: str
+    periodo: str
+    valor_dia: float
+    media_historica: float
+    diferenca_percentual: float
+    validation: str
+
+
+class RefAnalysisDateResponse(BaseModel):
+    locale: str
+    date: Dict[str, str]
+    metric: str
+    items: List[RefAnalysisDateItem]
+    summary: Dict[str, Any]

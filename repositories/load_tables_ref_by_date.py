@@ -1,8 +1,3 @@
-# %%
-# import os
-
-# os.chdir(r"C:\Users\henri\OneDrive\RMtech\APIanalitico")
-# %% 
 from datetime import datetime
 from typing import Optional
 
@@ -25,13 +20,14 @@ def load_ref_by_date(
 
     conn = get_conn()
     try:
-        query = "select * from [Arthos.Events].dbo.fnGetRefeitorioByDate(?, ?, ?, ?)"
+        query = "select * from [Arthos.Events].dbo.fnGetRefeitorioByDate(?, ?, ?, ?, ?)"
 
         params = [
             start_date,
             end_date,
             device_client_id,
-            is_unique
+            is_unique,
+            event_type_id,
         ]
 
         df = pd.read_sql_query(query, conn, params=params)
@@ -39,39 +35,7 @@ def load_ref_by_date(
         if df.empty:
             return df
 
-        df = df.copy()
-
-        # df["TipoAcesso"] = (
-        #     df["TipoAcesso"]
-        #     .astype("string")
-        #     .fillna("Refeitorio")
-        #     .str.strip()
-        #     .replace("", "Refeitorio")
-        # )
-
-        # df["TipoRefeicao"] = (
-        #     df["TipoRefeicao"]
-        #     .astype("string")
-        #     .fillna("outofscope")
-        #     .str.strip()
-        #     .replace("", "outofscope")
-        # )
-
-        # if "DeviceClientId" in df.columns:
-        #     df["DeviceClientId"] = (
-        #         df["DeviceClientId"]
-        #         .astype("string")
-        #         .fillna("UNKNOWN")
-        #         .str.strip()
-        #         .replace("", "UNKNOWN")
-        #     )
-
         return df
 
     finally:
         conn.close()
-# # %%
-# df = table_load_access_events_by_client(start_date="01/02/2026",end_date="02/02/2026",
-#                                         is_unique=0)
-# df
-# %%

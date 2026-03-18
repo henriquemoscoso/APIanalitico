@@ -3,13 +3,15 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from schemas.access_schema import AccessStatsResponse, RefAvgIncrementalResponse
+from schemas.access_schema import AccessStatsResponse, RefAvgIncrementalResponse, RefAnalysisDateItem, RefAnalysisDateResponse
 from services.access_services import (
     build_ref_response_date,
     build_ref_response_hour,
     build_ref_avg_incremental_response,
+    build_ref_analysis_date_response,
 )
 from repositories.ref_media_bootstrap_repository import create_and_populate_ref_media_dias_table
+
 
 router = APIRouter(prefix="/access/stats", tags=["Access Stats"])
 
@@ -85,9 +87,9 @@ def get_refeitorio_hour(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
-
-@router.get("/ref/avgbyday", response_model=RefAvgIncrementalResponse)
-def get_refeitorio_avg_incremental(
+# Atualiza a tabela com a média incremental 
+@router.post("/ref/avgbyday", response_model=RefAvgIncrementalResponse)
+def refresh_refeitorio_avg_incremental(
     start_date: str = Query(..., description="Formato dd/mm/yyyy"),
     end_date: str = Query(..., description="Formato dd/mm/yyyy"),
     device_client_id: Optional[str] = Query(None),
@@ -104,6 +106,16 @@ def get_refeitorio_avg_incremental(
         raise HTTPException(status_code=400, detail="is_unique deve ser 0 ou 1.")
 
     try:
+        # 1) atualiza a tabela histórica
+        create_and_populate_ref_media_dias_table(
+            device_client_id=device_client_id,
+            start_date=start_date_dt,
+            end_date=end_date_dt,
+            is_unique=is_unique,
+            event_type_id=event_type_id,
+        )
+
+        # 2) retorna a média incremental já considerando a base atualizada
         return build_ref_avg_incremental_response(
             device_client_id=device_client_id,
             start_date=start_date_dt,
@@ -111,14 +123,15 @@ def get_refeitorio_avg_incremental(
             is_unique=is_unique,
             event_type_id=event_type_id,
         )
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+    
 
-
-@router.post("/ref/media_dias/bootstrap")
-def bootstrap_ref_media_dias(
+@router.get("/ref/analysis_date", response_model=RefAnalysisDateResponse)
+def get_refeitorio_analysis_date(
     start_date: str = Query(..., description="Formato dd/mm/yyyy"),
     end_date: str = Query(..., description="Formato dd/mm/yyyy"),
     device_client_id: Optional[str] = Query(None),
@@ -135,7 +148,7 @@ def bootstrap_ref_media_dias(
         raise HTTPException(status_code=400, detail="is_unique deve ser 0 ou 1.")
 
     try:
-        return create_and_populate_ref_media_dias_table(
+        return build_ref_analysis_date_response(
             device_client_id=device_client_id,
             start_date=start_date_dt,
             end_date=end_date_dt,
